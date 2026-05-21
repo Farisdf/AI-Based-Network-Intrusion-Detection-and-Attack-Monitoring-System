@@ -1,4 +1,4 @@
 ﻿timestamp,ip,direction,threat_type,severity,score,description
-2026-05-21T17:42:25.125657,192.168.56.104,inbound,Port scan,high,15,15 distinct ports probed within 10s
-2026-05-21T17:42:25.730682,192.168.56.104,inbound,DoS / SYN flood,high,100,100 TCP SYN packets within 10s
-2026-05-21T17:42:29.805232,192.168.56.104,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T22:36:56.539903,192.168.56.104,inbound,Port scan,high,15,15 distinct ports probed within 10s
+2026-05-21T22:36:57.159058,192.168.56.104,inbound,DoS / SYN flood,high,100,100 TCP SYN packets within 10s
+2026-05-21T22:37:01.253648,192.168.56.104,inbound,DoS / packet flood,high,500,500 packets within 10s

@@ -1,0 +1,7 @@
+# Core IDS + dashboard dependencies
+pyshark
+pandas
+flask
+
+# Optional: only needed for the standalone PE inspector (Lief.py)
+# lief

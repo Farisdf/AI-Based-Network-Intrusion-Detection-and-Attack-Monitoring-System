@@ -1,0 +1,55 @@
+timestamp,ip,direction,threat_type,severity,score,description
+2026-05-19T22:14:05.023929,203.0.113.10,inbound,Port scan,high,15,15 distinct ports probed within 10s
+2026-05-19T22:14:06.059049,198.51.100.20,inbound,DoS / SYN flood,high,100,100 TCP SYN packets within 10s
+2026-05-19T22:14:06.382553,198.51.100.20,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-19T22:14:07.518452,192.0.2.30,inbound,Brute force,high,10,10 connection attempts to SSH (port 22) within 30s
+2026-05-21T12:34:56.241654,192.168.1.1,inbound,Port scan,high,15,15 distinct ports probed within 10s
+2026-05-21T12:34:57.752253,213.139.57.206,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:34:59.260033,192.168.1.13,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:35:00.306772,212.34.3.29,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:35:02.642723,213.139.46.175,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:35:13.135829,213.139.47.77,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:35:17.610482,212.34.3.31,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:35:19.105809,213.139.57.140,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:35:20.942270,213.139.57.143,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:35:22.893995,212.34.3.28,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:35:29.182276,212.34.3.19,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:35:30.253250,192.168.1.1,inbound,DoS / SYN flood,high,100,100 TCP SYN packets within 10s
+2026-05-21T12:35:31.558379,213.139.57.141,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:35:34.329529,213.139.57.142,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:35:37.282351,212.34.31.76,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:35:40.011876,142.251.20.119,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:36:45.244756,162.159.136.232,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:36:53.446003,192.168.1.13,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:36:53.695949,192.168.1.1,inbound,Port scan,high,15,15 distinct ports probed within 10s
+2026-05-21T12:36:55.206894,212.34.3.28,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:37:00.400209,162.159.130.233,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:37:00.976241,142.251.155.119,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:37:06.224802,172.217.18.110,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:37:13.046093,172.64.155.209,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:37:29.818566,192.168.1.1,inbound,DoS / SYN flood,high,100,100 TCP SYN packets within 10s
+2026-05-21T12:37:41.665404,162.159.133.232,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:37:54.766584,192.168.1.1,inbound,Port scan,high,15,15 distinct ports probed within 10s
+2026-05-21T12:37:56.074757,213.139.57.143,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:39:32.988385,192.168.1.1,inbound,Port scan,high,15,15 distinct ports probed within 10s
+2026-05-21T12:39:47.516620,192.168.1.1,inbound,DoS / SYN flood,high,100,100 TCP SYN packets within 10s
+2026-05-21T12:39:53.667062,212.34.3.19,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:40:01.575655,192.168.1.13,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:42:04.471241,192.168.1.1,inbound,DoS / SYN flood,high,100,100 TCP SYN packets within 10s
+2026-05-21T12:44:21.802091,192.168.1.1,inbound,DoS / SYN flood,high,100,100 TCP SYN packets within 10s
+2026-05-21T12:46:38.661483,192.168.1.1,inbound,DoS / SYN flood,high,100,100 TCP SYN packets within 10s
+2026-05-21T12:46:42.162924,2.17.25.251,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:46:51.032284,192.168.1.13,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T12:48:56.016130,192.168.1.1,inbound,DoS / SYN flood,high,100,100 TCP SYN packets within 10s
+2026-05-21T12:51:13.451370,192.168.1.1,inbound,DoS / SYN flood,high,100,100 TCP SYN packets within 10s
+2026-05-21T12:53:30.346665,192.168.1.1,inbound,DoS / SYN flood,high,100,100 TCP SYN packets within 10s
+2026-05-21T12:55:47.536092,192.168.1.1,inbound,DoS / SYN flood,high,100,100 TCP SYN packets within 10s
+2026-05-21T12:58:04.761107,192.168.1.1,inbound,DoS / SYN flood,high,100,100 TCP SYN packets within 10s
+2026-05-21T13:00:22.186703,192.168.1.1,inbound,DoS / SYN flood,high,100,100 TCP SYN packets within 10s
+2026-05-21T13:02:39.555842,192.168.1.1,inbound,DoS / SYN flood,high,100,100 TCP SYN packets within 10s
+2026-05-21T13:04:56.614814,192.168.1.1,inbound,DoS / SYN flood,high,100,100 TCP SYN packets within 10s
+2026-05-21T13:07:13.622102,192.168.1.1,inbound,DoS / SYN flood,high,100,100 TCP SYN packets within 10s
+2026-05-21T13:09:10.667192,104.18.32.47,inbound,DoS / packet flood,high,500,500 packets within 10s
+2026-05-21T13:09:31.171404,192.168.1.1,inbound,DoS / SYN flood,high,100,100 TCP SYN packets within 10s
+2026-05-21T13:11:48.081600,192.168.1.1,inbound,DoS / SYN flood,high,100,100 TCP SYN packets within 10s
+2026-05-21T13:14:05.719114,192.168.1.1,inbound,DoS / SYN flood,high,100,100 TCP SYN packets within 10s

@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git ls-remote *)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt\")",
+      "Bash(cd \"c:\\\\Users\\\\faris\\\\Downloads\\\\pyshark\" && cp threat_log.csv threat_log.csv.bak && echo \"backed up threat_log.csv -> threat_log.csv.bak\" && python --version)",
+      "Bash(python -m py_compile main.py get_iocs.py Check_IP.py IDS.py alerting.py dashboard.py Lief.py)",
+      "Bash(python get_iocs.py)",
+      "Bash(rm -f threat_log.csv)",
+      "Bash(python -c ' *)",
+      "Bash(where tshark *)",
+      "Bash(tshark -D)",
+      "PowerShell(& \"C:\\\\Program Files\\\\Wireshark\\\\tshark.exe\" -D)",
+      "Bash(python dashboard.py)",
+      "Bash(curl -s -o nul -w \"GET / -> HTTP %{http_code}\\\\n\" http://127.0.0.1:5000/)",
+      "Bash(curl -s http://127.0.0.1:5000/api/data)",
+      "PowerShell($env:PATH += ';C:\\\\Program Files\\\\Wireshark'; python main.py)",
+      "Bash(break)",
+      "PowerShell($env:PATH += ';C:\\\\Program Files\\\\Wireshark'; $env:PYTHONUNBUFFERED = '1'; python -u main.py)",
+      "Bash(\"/c/Program Files/Wireshark/tshark.exe\" -v)",
+      "Bash(python -c \"import pyshark; print\\('pyshark', pyshark.__version__\\)\")",
+      "Bash(python main.py)",
+      "Bash(tasklist /FI \"IMAGENAME eq python.exe\" /FI \"IMAGENAME eq tshark.exe\")",
+      "PowerShell(Get-Process python,tshark,dumpcap -ErrorAction SilentlyContinue)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\faris\\Downloads\\pyshark"
+    ]
+  }
+}

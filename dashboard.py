@@ -11,7 +11,10 @@ Run it in its own terminal alongside the IDS:
 then open http://127.0.0.1:5000 in a browser.
 """
 
+import csv
 import os
+import re
+import shutil
 
 try:
     from flask import Flask, jsonify, request
@@ -25,6 +28,10 @@ LOG_FILE = "threat_log.csv"
 COLUMNS = ["timestamp", "ip", "direction", "threat_type", "severity", "score", "description"]
 HOST = "127.0.0.1"   # local only; change to "0.0.0.0" to expose on the LAN
 PORT = 5000
+
+# Backup files are written as threat_log.csv.bak-YYYYMMDD-HHMMSS - we only
+# accept that exact pattern in /analyze/ to block directory traversal.
+BACKUP_RE = re.compile(r"^threat_log\.csv\.bak-\d{8}-\d{6}$")
 
 app = Flask(__name__)
 
@@ -67,12 +74,13 @@ def calculate_risk(threat_type, severity, score):
     return int(max(0, min(100, sev_base + type_boost + intensity)))
 
 
-def load_alerts():
-    """Load threat_log.csv into a DataFrame, tolerating an empty/locked file."""
-    if not os.path.isfile(LOG_FILE) or os.path.getsize(LOG_FILE) == 0:
+def load_alerts(path=None):
+    """Load a threat-log CSV into a DataFrame, tolerating an empty/locked file."""
+    p = path or LOG_FILE
+    if not os.path.isfile(p) or os.path.getsize(p) == 0:
         return pd.DataFrame(columns=COLUMNS + ["risk"])
     try:
-        df = pd.read_csv(LOG_FILE, on_bad_lines="skip")
+        df = pd.read_csv(p, on_bad_lines="skip")
     except Exception:
         return pd.DataFrame(columns=COLUMNS + ["risk"])
 
@@ -342,6 +350,108 @@ def info_page(key):
     return render_info_page(key, data)
 
 
+@app.route("/api/reset-log", methods=["POST"])
+def reset_log():
+    """Clear threat_log.csv. If save=true (default), copy it to a timestamped
+    backup first so it can be opened on the /analyze/<filename> page."""
+    payload = request.get_json(silent=True) or {}
+    save = bool(payload.get("save", True))
+    backup_name = None
+    try:
+        if save and os.path.isfile(LOG_FILE) and os.path.getsize(LOG_FILE) > 0:
+            backup_name = f"{LOG_FILE}.bak-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+            shutil.copy2(LOG_FILE, backup_name)
+        with open(LOG_FILE, "w", newline="", encoding="utf-8") as f:
+            csv.writer(f).writerow(COLUMNS)
+        return jsonify(ok=True, backup=os.path.basename(backup_name) if backup_name else None)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
+
+
+def _humanize_bak_timestamp(filename):
+    """Pull the YYYYMMDD-HHMMSS suffix out of a backup filename and format it."""
+    m = re.search(r"bak-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$", filename)
+    if not m:
+        return ""
+    y, mo, d, h, mi, s = m.groups()
+    return f"{y}-{mo}-{d} {h}:{mi}:{s}"
+
+
+@app.route("/analyze/<path:filename>")
+def analyze_page(filename):
+    """Read-only analysis view of a saved backup."""
+    if not BACKUP_RE.match(filename):
+        return ("<p style='color:#e6edf3;background:#0d1117;padding:24px;"
+                "font-family:sans-serif;margin:0;min-height:100vh;'>"
+                "Invalid backup filename. <a href='/' style='color:#58a6ff'>"
+                "Back to dashboard</a></p>"), 400
+    if not os.path.isfile(filename):
+        return ("<p style='color:#e6edf3;background:#0d1117;padding:24px;"
+                "font-family:sans-serif;margin:0;min-height:100vh;'>"
+                f"Backup not found: <code>{filename}</code>. "
+                "<a href='/' style='color:#58a6ff'>Back to dashboard</a></p>"), 404
+
+    df = load_alerts(filename)
+    total = len(df)
+    if total:
+        df = df.sort_values("timestamp", ascending=False)
+
+    # Top-line stats.
+    stats = {
+        "total":      total,
+        "unique_ips": int(df["ip"].nunique()) if total else 0,
+        "inbound":    int((df["direction"] == "inbound").sum()),
+        "outbound":   int((df["direction"] == "outbound").sum()),
+        "high":       int((df["severity"] == "high").sum()),
+        "medium":     int((df["severity"] == "medium").sum()),
+        "low":        int((df["severity"] == "low").sum()),
+        "max_risk":   int(df["risk"].max()) if total else 0,
+        "avg_risk":   int(round(df["risk"].mean())) if total else 0,
+        "first":      df["timestamp"].iloc[-1] if total else "",
+        "last":       df["timestamp"].iloc[0]  if total else "",
+    }
+
+    # Threat-type breakdown and top attackers.
+    if total:
+        by_type = df.groupby("threat_type").size().sort_values(ascending=False)
+        type_max = int(by_type.max())
+        by_type_list = [
+            {"label": str(label),
+             "count": int(c),
+             "pct":   int(round(100 * c / type_max))}
+            for label, c in by_type.items()
+        ]
+        top = df.groupby("ip").size().sort_values(ascending=False).head(10)
+        top_attackers = [{"ip": str(ip), "count": int(c)} for ip, c in top.items()]
+    else:
+        by_type_list, top_attackers = [], []
+
+    alerts = []
+    for rec in df.to_dict(orient="records"):
+        rec["score"] = int(rec["score"])
+        rec["risk"]  = int(rec["risk"])
+        alerts.append(rec)
+
+    import json
+    html = ANALYZE_PAGE.replace(
+        "__PAYLOAD__",
+        json.dumps({
+            "filename":      filename,
+            "saved_at":      _humanize_bak_timestamp(filename),
+            "stats":         stats,
+            "alerts":        alerts,
+            "by_type":       by_type_list,
+            "top_attackers": top_attackers,
+        }),
+    )
+    # Stop the browser caching an older response - the page is dynamic.
+    resp = app.make_response(html)
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"]        = "no-cache"
+    resp.headers["Expires"]       = "0"
+    return resp
+
+
 @app.route("/api/topology-feed")
 def topology_feed():
     """
@@ -456,13 +566,51 @@ PAGE = """<!DOCTYPE html>
     cursor:pointer; font-size:12px; margin-right:6px; }
   .filters button.active { background:var(--accent); color:#fff;
     border-color:var(--accent); }
+  .filters button.danger-btn { color:var(--high);
+    border-color:rgba(248,81,73,.4); }
+  .filters button.danger-btn:hover { background:var(--high); color:#fff;
+    border-color:var(--high); }
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.65);
+    display:none; align-items:center; justify-content:center; z-index:1000; }
+  .modal-bg.show { display:flex; }
+  .modal { background:var(--card); border:1px solid var(--border);
+    border-radius:10px; padding:22px 26px; max-width:460px; width:90%;
+    box-shadow:0 16px 48px rgba(0,0,0,.5); }
+  .modal h2 { font-size:18px; color:var(--text); margin-bottom:10px; }
+  .modal p { color:var(--muted); font-size:13.5px; line-height:1.55;
+    margin-bottom:18px; }
+  .modal p b { color:var(--text); }
+  .modal-actions { display:flex; flex-wrap:wrap; gap:8px;
+    justify-content:flex-end; align-items:center; }
+  .modal-actions button, .modal-actions a {
+    background:var(--bg); color:var(--text);
+    border:1px solid var(--border); padding:8px 14px; border-radius:6px;
+    cursor:pointer; font-size:13px; font-family:inherit;
+    text-decoration:none; line-height:1.2; display:inline-block; }
+  .modal-actions button:hover, .modal-actions a:hover {
+    border-color:var(--accent); color:var(--accent); }
+  .modal-actions .primary { background:var(--accent); color:#fff;
+    border-color:var(--accent); }
+  .modal-actions .primary:hover { background:#4090e0; color:#fff;
+    border-color:#4090e0; }
+  .modal-actions .danger { color:var(--high);
+    border-color:rgba(248,81,73,.4); }
+  .modal-actions .danger:hover { background:var(--high); color:#fff;
+    border-color:var(--high); }
   .empty { color:var(--muted); text-align:center; padding:28px; }
+  .alarm-btn { background:transparent; color:var(--muted);
+    border:1px solid var(--border); padding:2px 10px; border-radius:14px;
+    cursor:pointer; font-size:12px; font-family:inherit; vertical-align:middle; }
+  .alarm-btn:hover { color:var(--text); border-color:var(--accent); }
+  .alarm-btn.on { background:var(--high); color:#fff; border-color:var(--high); }
+  .alarm-btn.on:hover { color:#fff; }
 </style>
 </head>
 <body>
   <h1>&#128737; Network IDS Dashboard</h1>
   <div class="sub"><span class="dot"></span>Live &middot; auto-refresh every 5s &middot;
        <span id="updated">connecting...</span> &middot;
+       <button id="alarm-toggle" class="alarm-btn" title="Play a siren on every new alert">&#128680; Alarm: OFF</button> &middot;
        <a href="/topology" style="color:var(--accent);text-decoration:none;">Attack Topology Simulator &rarr;</a></div>
 
   <div class="cards" id="cards"></div>
@@ -475,6 +623,7 @@ PAGE = """<!DOCTYPE html>
         <button data-f="inbound">Inbound</button>
         <button data-f="outbound">Outbound</button>
         <button data-f="high">High severity</button>
+        <button id="reset-log" class="danger-btn" title="Clear threat_log.csv. A timestamped backup is saved first.">&#128465; Reset Log</button>
       </div>
       <table>
         <thead><tr>
@@ -493,8 +642,98 @@ PAGE = """<!DOCTYPE html>
     </div>
   </div>
 
+  <div class="modal-bg" id="reset-modal">
+    <div class="modal">
+      <!-- Step 1: ask the user. -->
+      <div id="reset-step-ask">
+        <h2>Reset threat log</h2>
+        <p>The current log has <b id="reset-count">0</b> detections.
+           Save a copy before clearing? Saved logs open on a separate
+           analysis page so you can review them later.</p>
+        <div class="modal-actions">
+          <button id="reset-cancel">Cancel</button>
+          <button id="reset-discard" class="danger">&#128465; Discard &amp; Reset</button>
+          <button id="reset-save" class="primary">&#128190; Save &amp; Analyze</button>
+        </div>
+      </div>
+      <!-- Step 2: confirmation after a successful save (hidden by default). -->
+      <div id="reset-step-done" style="display:none">
+        <h2 style="color:var(--low)">&#9989; Log saved</h2>
+        <p>Backup written to:<br>
+           <b style="font-family:Consolas,monospace; word-break:break-all;"
+              id="reset-backup-name"></b></p>
+        <p style="font-size:12.5px">If a new tab didn't open automatically,
+           click the button below to view the analysis.</p>
+        <div class="modal-actions">
+          <button id="reset-done">Done</button>
+          <a id="reset-open-analysis" class="primary"
+             href="#" target="_blank"
+             style="text-decoration:none; display:inline-block;">
+            &#128202; Open Analysis
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
 <script>
   let allAlerts = [], filter = 'all';
+
+  // ---- Alarm sound ----------------------------------------------------
+  // Plays a two-tone siren via Web Audio on every new alert. Off by
+  // default because browsers block audio until the user clicks
+  // something; the toggle below is that gesture and persists in
+  // localStorage. lastSeenTs is the newest timestamp we've already
+  // alarmed on, so we don't replay the historical log on first load.
+  let alarmOn    = localStorage.getItem('ids-alarm') === '1';
+  let lastSeenTs = null;
+  let audioCtx   = null;
+
+  function playSiren() {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    if (!audioCtx) audioCtx = new AC();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+
+    const ctx  = audioCtx;
+    const now  = ctx.currentTime;
+    const osc  = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type   = 'square';
+    // Two-tone siren: alternate 880Hz / 523Hz, three times.
+    const tones = [880, 523, 880, 523, 880, 523];
+    const dur   = 0.18;
+    tones.forEach((f, i) => osc.frequency.setValueAtTime(f, now + i * dur));
+    // Envelope: fade in/out so it doesn't click.
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.18, now + 0.015);
+    gain.gain.setValueAtTime(0.18, now + tones.length * dur - 0.04);
+    gain.gain.linearRampToValueAtTime(0.0001, now + tones.length * dur);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + tones.length * dur + 0.05);
+  }
+
+  function fireAlarm() {
+    if (!alarmOn) return;
+    try { playSiren(); } catch (_) { /* best-effort */ }
+  }
+
+  function updateAlarmBtn() {
+    const btn = document.getElementById('alarm-toggle');
+    btn.classList.toggle('on', alarmOn);
+    btn.innerHTML = alarmOn ? '&#128680; Alarm: ON' : '&#128680; Alarm: OFF';
+  }
+
+  document.getElementById('alarm-toggle').onclick = () => {
+    alarmOn = !alarmOn;
+    localStorage.setItem('ids-alarm', alarmOn ? '1' : '0');
+    updateAlarmBtn();
+    // Play a short test chirp on enable - also primes the browser's
+    // autoplay gate so later automatic alarms are allowed.
+    if (alarmOn) playSiren();
+  };
+  updateAlarmBtn();
 
   function fmtTime(t) {
     if (!t) return '\\u2014';
@@ -589,6 +828,18 @@ PAGE = """<!DOCTYPE html>
       const d = await res.json();
       allAlerts = d.alerts;
 
+      // Sound the alarm if any alert is newer than the last one we saw.
+      // One siren per refresh cycle even if several arrived together.
+      if (allAlerts.length) {
+        const newest = allAlerts[0].timestamp;
+        if (lastSeenTs === null) {
+          lastSeenTs = newest;       // first load - just record baseline
+        } else if (newest > lastSeenTs) {
+          fireAlarm();
+          lastSeenTs = newest;
+        }
+      }
+
       const s = d.stats;
       const maxRiskTier = riskTier(s.max_risk || 0);
       const maxRiskColor = {crit:'var(--high)', high:'#f0883e',
@@ -620,14 +871,96 @@ PAGE = """<!DOCTYPE html>
     }
   }
 
-  document.querySelectorAll('#filters button').forEach(b => {
+  document.querySelectorAll('#filters button:not(#reset-log)').forEach(b => {
     b.onclick = () => {
-      document.querySelectorAll('#filters button')
+      document.querySelectorAll('#filters button:not(#reset-log)')
         .forEach(x => x.classList.remove('active'));
       b.classList.add('active');
       filter = b.dataset.f;
       render();
     };
+  });
+
+  // ---- Reset-log modal -------------------------------------------------
+  // Two-step flow:
+  //   1. ASK: cancel / discard-without-saving / save-then-analyze.
+  //   2. DONE (only after Save succeeds): show the backup filename and a
+  //      direct link to the analysis page. We also try to auto-open it in
+  //      a new tab, but popup blockers can silently drop that - the
+  //      explicit link is the guaranteed escape hatch.
+  const resetModal = document.getElementById('reset-modal');
+  const stepAsk    = document.getElementById('reset-step-ask');
+  const stepDone   = document.getElementById('reset-step-done');
+
+  function showAskStep()  { stepAsk.style.display = '';   stepDone.style.display = 'none'; }
+  function showDoneStep() { stepAsk.style.display = 'none'; stepDone.style.display = ''; }
+
+  function openResetModal() {
+    document.getElementById('reset-count').textContent = allAlerts.length;
+    showAskStep();
+    resetModal.classList.add('show');
+  }
+  function closeResetModal() {
+    resetModal.classList.remove('show');
+    // Reset to the question state so the next open starts fresh.
+    showAskStep();
+  }
+
+  async function doReset(save, openTab) {
+    try {
+      const res = await fetch('/api/reset-log', {
+        method:  'POST',
+        headers: {'Content-Type': 'application/json'},
+        body:    JSON.stringify({ save: save })
+      });
+      const d = await res.json();
+      if (!d.ok) {
+        if (openTab) openTab.close();
+        alert('Reset failed: ' + (d.error || 'unknown error'));
+        return;
+      }
+
+      // Don't reset lastSeenTs - leaving it at the old (now-deleted)
+      // timestamp ensures the next real alert still fires the alarm.
+      await refresh();
+
+      if (save && d.backup) {
+        const url = '/analyze/' + encodeURIComponent(d.backup);
+        // Best-effort auto-open; if blocked, the user clicks the link below.
+        if (openTab && !openTab.closed) {
+          try { openTab.location.href = url; } catch (_) {}
+        }
+        document.getElementById('reset-backup-name').textContent = d.backup;
+        document.getElementById('reset-open-analysis').href = url;
+        showDoneStep();
+      } else {
+        // Discard path - just close.
+        closeResetModal();
+      }
+    } catch (e) {
+      if (openTab) openTab.close();
+      alert('Reset failed: ' + e.message);
+    }
+  }
+
+  document.getElementById('reset-log').onclick     = openResetModal;
+  document.getElementById('reset-cancel').onclick  = closeResetModal;
+  document.getElementById('reset-done').onclick    = closeResetModal;
+  document.getElementById('reset-discard').onclick = () => doReset(false, null);
+  document.getElementById('reset-save').onclick    = () => {
+    // Open synchronously in the click handler so popup blockers allow it
+    // when they can. If they still block, the success-step link is the
+    // guaranteed fallback.
+    let tab = null;
+    try { tab = window.open('about:blank', '_blank'); } catch (_) {}
+    doReset(true, tab);
+  };
+  // Click outside the box, or press Escape, to dismiss (only on the ask step).
+  resetModal.onclick = (e) => {
+    if (e.target === resetModal && stepAsk.style.display !== 'none') closeResetModal();
+  };
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && resetModal.classList.contains('show')) closeResetModal();
   });
 
   refresh();
@@ -856,6 +1189,31 @@ TOPOLOGY_PAGE = """<!DOCTYPE html>
   let alertCount    = 0;
   let raf           = null;
   const flying      = new Set();// active packet objects
+  let topoAudioCtx  = null;
+
+  // Two-tone siren via Web Audio. Matches the one on the main dashboard
+  // so the experience is consistent.
+  function topoSiren() {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    if (!topoAudioCtx) topoAudioCtx = new AC();
+    if (topoAudioCtx.state === 'suspended') topoAudioCtx.resume();
+    const ctx  = topoAudioCtx;
+    const now  = ctx.currentTime;
+    const osc  = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type   = 'square';
+    const tones = [880, 523, 880, 523, 880, 523];
+    const dur   = 0.18;
+    tones.forEach((f, i) => osc.frequency.setValueAtTime(f, now + i * dur));
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.18, now + 0.015);
+    gain.gain.setValueAtTime(0.18, now + tones.length * dur - 0.04);
+    gain.gain.linearRampToValueAtTime(0.0001, now + tones.length * dur);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + tones.length * dur + 0.05);
+  }
 
   // ---- Helpers ----------------------------------------------------------
   function $(id) { return document.getElementById(id); }
@@ -1106,6 +1464,10 @@ TOPOLOGY_PAGE = """<!DOCTYPE html>
           idsState.textContent = 'ALERT';
           logLine(`[ALERT] ${alert.threat_type} from ${alert.ip} - ${alert.description || ''}`,
                   'alert');
+          // Respect the dashboard's alarm toggle (shared via localStorage).
+          if (localStorage.getItem('ids-alarm') === '1') {
+            try { topoSiren(); } catch (_) {}
+          }
           setTimeout(() => {
             setNodeState('n-attacker', null);
             setNodeState('n-ids', null);
@@ -1200,6 +1562,243 @@ TOPOLOGY_PAGE = """<!DOCTYPE html>
     // Small delay so the SVG and styles have rendered.
     setTimeout(() => playLiveAlert(alert), 350);
   })();
+</script>
+</body>
+</html>
+"""
+
+
+ANALYZE_PAGE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Archived Log Analysis</title>
+<style>
+  :root {
+    --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3;
+    --muted:#8b949e; --high:#f85149; --med:#d29922; --low:#3fb950; --accent:#58a6ff;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text);
+         font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; padding:24px; }
+  .crumb { color:var(--muted); font-size:13px; margin-bottom:16px; }
+  .crumb a { color:var(--accent); text-decoration:none; }
+  .crumb a:hover { text-decoration:underline; }
+  h1 { font-size:22px; }
+  .sub { color:var(--muted); font-size:13px; margin:4px 0 20px;
+         font-family:Consolas,'Courier New',monospace; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+           gap:14px; margin-bottom:22px; }
+  .card { background:var(--card); border:1px solid var(--border);
+          border-radius:10px; padding:16px; }
+  .card .label { color:var(--muted); font-size:11px; text-transform:uppercase;
+                 letter-spacing:.6px; }
+  .card .value { font-size:24px; font-weight:600; margin-top:6px;
+                 word-break:break-word; }
+  .layout { display:grid; grid-template-columns:2fr 1fr; gap:18px; }
+  @media (max-width:880px){ .layout{ grid-template-columns:1fr; } }
+  .panel { background:var(--card); border:1px solid var(--border);
+           border-radius:10px; padding:16px; margin-bottom:18px; }
+  .panel h2 { font-size:13px; color:var(--muted); text-transform:uppercase;
+              letter-spacing:.6px; margin-bottom:12px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { text-align:left; color:var(--muted); font-weight:500; padding:8px;
+       border-bottom:1px solid var(--border); position:sticky; top:0;
+       background:var(--card); z-index:1; }
+  td { padding:8px; border-bottom:1px solid var(--border);
+       vertical-align:top; }
+  tr:last-child td { border-bottom:none; }
+  .ip { font-family:Consolas,'Courier New',monospace; }
+  .badge { padding:2px 9px; border-radius:20px; font-size:11px; font-weight:600; }
+  .high   { background:rgba(248,81,73,.15);  color:var(--high); }
+  .medium { background:rgba(210,153,34,.15); color:var(--med); }
+  .low    { background:rgba(63,185,80,.15);  color:var(--low); }
+  .risk { display:flex; align-items:center; gap:8px; min-width:90px; }
+  .risk .bar { flex:1; height:6px; background:#0a0e14; border-radius:3px;
+               overflow:hidden; border:1px solid var(--border); }
+  .risk .fill { height:100%; }
+  .risk .num { font-family:Consolas,monospace; font-size:12px; font-weight:600;
+               min-width:28px; text-align:right; }
+  .risk.r-crit .fill { background:var(--high); }
+  .risk.r-high .fill { background:#f0883e; }
+  .risk.r-med  .fill { background:var(--med); }
+  .risk.r-low  .fill { background:var(--low); }
+  .risk.r-crit .num { color:var(--high); }
+  .risk.r-high .num { color:#f0883e; }
+  .risk.r-med  .num { color:var(--med); }
+  .risk.r-low  .num { color:var(--low); }
+  .dir-inbound  { color:var(--high); }
+  .dir-outbound { color:var(--accent); }
+  .dir-local    { color:var(--muted); }
+  .table-wrap { max-height:540px; overflow-y:auto; }
+  .empty { color:var(--muted); text-align:center; padding:28px; }
+  .desc { color:var(--muted); font-size:12px; max-width:340px;
+          white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .breakdown { display:flex; flex-direction:column; gap:8px; }
+  .br-row { display:grid; grid-template-columns:1fr auto; align-items:center;
+            gap:8px; }
+  .br-row .lbl { font-size:13px; color:var(--text); }
+  .br-row .cnt { font-family:Consolas,monospace; font-size:12px;
+                 color:var(--muted); }
+  .br-bar { grid-column:1 / -1; height:4px; background:#0a0e14;
+            border-radius:2px; overflow:hidden;
+            border:1px solid var(--border); }
+  .br-fill { height:100%; background:var(--accent); }
+  .br-fill.high { background:var(--high); }
+  .br-fill.med  { background:var(--med); }
+  .meta-line { color:var(--muted); font-size:12px; margin-top:14px; }
+</style>
+</head>
+<body>
+  <div class="crumb">
+    <a href="/">&larr; Back to live dashboard</a>
+  </div>
+
+  <h1>&#128202; Archived Threat Log Analysis</h1>
+  <div class="sub" id="meta">loading...</div>
+
+  <div class="cards" id="cards"></div>
+
+  <div class="layout">
+    <div class="panel">
+      <h2 id="table-title">All Detections</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>Time</th><th>IP</th><th>Direction</th>
+            <th>Type</th><th>Severity</th><th>Score</th>
+            <th>Risk</th><th>Description</th>
+          </tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel">
+        <h2>Threat Type Breakdown</h2>
+        <div class="breakdown" id="by-type"></div>
+      </div>
+      <div class="panel">
+        <h2>Top Attackers</h2>
+        <table>
+          <thead><tr><th>IP</th><th>Hits</th></tr></thead>
+          <tbody id="top"></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <h2>Severity Mix</h2>
+        <div class="breakdown" id="sev-mix"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const data = __PAYLOAD__;
+
+  function fmtTime(t) {
+    if (!t) return '\\u2014';
+    return t.replace('T', ' ').slice(0, 19);
+  }
+
+  function riskTier(r) {
+    if (r >= 80) return 'crit';
+    if (r >= 60) return 'high';
+    if (r >= 35) return 'med';
+    return 'low';
+  }
+
+  function riskCell(r) {
+    const tier = riskTier(r);
+    return `<div class="risk r-${tier}">
+              <div class="bar"><div class="fill" style="width:${r}%"></div></div>
+              <div class="num">${r}</div>
+            </div>`;
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
+
+  // ---- Header / meta ----------------------------------------------------
+  const span = (data.stats.first && data.stats.last)
+    ? `${fmtTime(data.stats.first)}  \\u2192  ${fmtTime(data.stats.last)}`
+    : 'no detections';
+  document.getElementById('meta').textContent =
+    `${data.filename}  \\u00B7  saved ${data.saved_at}  \\u00B7  ${data.stats.total} detections  \\u00B7  ${span}`;
+
+  // ---- Cards ------------------------------------------------------------
+  const s = data.stats;
+  document.getElementById('cards').innerHTML = [
+    ['Total alerts',     s.total,      null],
+    ['Unique attackers', s.unique_ips, null],
+    ['Inbound',          s.inbound,    'var(--high)'],
+    ['Outbound',         s.outbound,   'var(--accent)'],
+    ['High severity',    s.high,       'var(--high)'],
+    ['Medium severity',  s.medium,     'var(--med)'],
+    ['Low severity',     s.low,        'var(--low)'],
+    ['Max risk',         s.max_risk,   null],
+    ['Avg risk',         s.avg_risk,   null]
+  ].map(([l, v, c]) =>
+    `<div class="card"><div class="label">${l}</div>
+     <div class="value"${c?` style="color:${c}"`:''}>${v}</div></div>`).join('');
+
+  // ---- Detection table --------------------------------------------------
+  const rows = document.getElementById('rows');
+  if (!data.alerts.length) {
+    rows.innerHTML = '<tr><td colspan="8" class="empty">No detections in this backup.</td></tr>';
+  } else {
+    rows.innerHTML = data.alerts.map(a => `
+      <tr>
+        <td>${fmtTime(a.timestamp)}</td>
+        <td class="ip">${esc(a.ip)}</td>
+        <td class="dir-${esc(a.direction)}">${esc(a.direction)}</td>
+        <td>${esc(a.threat_type)}</td>
+        <td><span class="badge ${esc(a.severity)}">${esc(a.severity)}</span></td>
+        <td>${a.score}</td>
+        <td>${riskCell(a.risk || 0)}</td>
+        <td class="desc" title="${esc(a.description || '')}">${esc(a.description || '')}</td>
+      </tr>`).join('');
+  }
+  document.getElementById('table-title').textContent =
+    `All Detections (${data.alerts.length})`;
+
+  // ---- Threat-type breakdown -------------------------------------------
+  const byType = document.getElementById('by-type');
+  if (!data.by_type.length) {
+    byType.innerHTML = '<div class="empty">No data.</div>';
+  } else {
+    byType.innerHTML = data.by_type.map(t => `
+      <div class="br-row"><span class="lbl">${esc(t.label)}</span>
+        <span class="cnt">${t.count}</span>
+        <div class="br-bar"><div class="br-fill" style="width:${t.pct}%"></div></div>
+      </div>`).join('');
+  }
+
+  // ---- Top attackers ----------------------------------------------------
+  const top = document.getElementById('top');
+  top.innerHTML = data.top_attackers.length
+    ? data.top_attackers.map(t =>
+        `<tr><td class="ip">${esc(t.ip)}</td><td>${t.count}</td></tr>`).join('')
+    : '<tr><td colspan="2" class="empty">No attackers in this backup.</td></tr>';
+
+  // ---- Severity mix -----------------------------------------------------
+  const sev = document.getElementById('sev-mix');
+  const sevMax = Math.max(s.high, s.medium, s.low, 1);
+  sev.innerHTML = [
+    ['high',   s.high,   'high'],
+    ['medium', s.medium, 'med'],
+    ['low',    s.low,    '']
+  ].map(([lbl, count, cls]) => {
+    const pct = Math.round(100 * count / sevMax);
+    return `<div class="br-row"><span class="lbl">${lbl}</span>
+              <span class="cnt">${count}</span>
+              <div class="br-bar"><div class="br-fill ${cls}" style="width:${pct}%"></div></div>
+            </div>`;
+  }).join('');
 </script>
 </body>
 </html>

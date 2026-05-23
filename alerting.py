@@ -8,6 +8,7 @@ and the optional email alerts are not flooded by a single noisy host.
 
 import csv
 import os
+import threading
 import time
 from datetime import datetime
 import smtplib
@@ -21,6 +22,11 @@ LOG_HEADER = ["timestamp", "ip", "direction", "threat_type", "severity", "score"
 ALERT_COOLDOWN = 60
 _last_alert = {}      # (ip, direction) -> epoch time of last alert
 _last_behavior = {}   # (ip, attack_type) -> epoch time of last behavioral alert
+
+# --- Alarm sound (optional, Windows) --------------------------------------
+# Plays a short two-tone siren on the system speaker on every new alert.
+# Runs on a daemon thread so packet processing is never blocked.
+ENABLE_ALARM = True
 
 # --- Email alerting (optional) --------------------------------------------
 # Leave ENABLE_EMAIL = False until the SMTP settings below are filled in.
@@ -39,6 +45,23 @@ def _severity(score):
     if score >= 4:
         return "medium"
     return "low"
+
+
+def _alarm():
+    """Play a short two-tone siren via winsound. Non-blocking (daemon thread)."""
+    if not ENABLE_ALARM:
+        return
+
+    def _play():
+        try:
+            import winsound
+            for _ in range(3):
+                winsound.Beep(880, 180)   # high tone
+                winsound.Beep(523, 180)   # low tone
+        except Exception:
+            pass  # alarm is best-effort - no winsound on non-Windows
+
+    threading.Thread(target=_play, daemon=True).start()
 
 
 def _ensure_log_header():
@@ -87,6 +110,7 @@ def alert(ip, direction, score, interface=""):
 
     log_threat(ip, direction, threat_type, severity, score, description)
 
+    _alarm()
     if ENABLE_EMAIL:
         send_email_alert(ip, threat_type, severity, description)
     return True
@@ -108,6 +132,8 @@ def alert_behavior(ip, attack_type, severity, score, detail):
     _last_behavior[key] = now
 
     log_threat(ip, "inbound", attack_type, severity, score, detail)
+
+    _alarm()
     if ENABLE_EMAIL:
         send_email_alert(ip, attack_type, severity, detail)
     return True

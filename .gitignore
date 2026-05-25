@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Claude Code per-machine settings
+.claude/settings.local.json
+
+# Runtime / personal data -- never commit live IDS state.
+threat_log.csv
+threat_log.csv.bak*
+ai_decisions.csv
+Malicious_IP.csv
+error.txt
+
+# Trained AI models (binary artifacts; rebuild via train_ai_baseline.py).
+ai_detection/models/
+*.joblib
+
+# Misc
+*.log

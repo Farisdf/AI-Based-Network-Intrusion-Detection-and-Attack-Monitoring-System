@@ -1,0 +1,12 @@
+# Core IDS + dashboard dependencies
+pyshark
+pandas
+flask
+
+# AI behavioural detection sidecar (ai_detection package)
+numpy
+scikit-learn
+joblib
+
+# Optional: only needed for the standalone PE inspector (Lief.py)
+# lief
